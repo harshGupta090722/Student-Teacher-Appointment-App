@@ -88,6 +88,7 @@ export const bookAppointment = async (req, res) => {
 
         const today = new Date();
         const upcomingDays = [];
+        
         for (let i = 0; i < 7; i++) {
             const d = new Date(today);
             d.setDate(d.getDate() + i);
@@ -174,13 +175,13 @@ export const cancelAppointment = async (req, res) => {
         const { id } = req.params;
 
         const appointment = await Appointment.findOneAndUpdate(
-            { _id: id, studentId: req.user._id },
+            { _id: id, studentId: req.user._id, status: "booked" },
             { status: "cancelled" },
             { returnDocument: "after" }
         );
 
         if (!appointment) {
-            return res.status(404).json({ errors: "Appointment not found or unauthorized" });
+            return res.status(404).json({ errors: "Appointment not found, unauthorized, or already cancelled" });
         }
 
         await Availability.findByIdAndUpdate(appointment.availabilityId, { status: "available" });

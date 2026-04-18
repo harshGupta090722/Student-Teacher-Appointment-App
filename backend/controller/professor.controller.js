@@ -2,40 +2,44 @@ import { Availability } from "../models/availability.model.js";
 import { Appointment } from "../models/Appointment.model.js";
 import { getVirtualSlots } from "../utils/slotGenerator.js";
 
-const mergeVirtualWithDB = (virtualSlots, dbSlots) => {
-    return virtualSlots.map(vSlot => {
-        const matchingDbSlot = dbSlots.find(dSlot =>
-            dSlot.date === vSlot.date &&
-            dSlot.startTime === vSlot.startTime
-        );
-        return matchingDbSlot || vSlot;
-    });
-};
+
 
 export const viewOwnSlots = async (req, res) => {
-
-    console.log("Hitting the route that shows the availablity for the professor for next 7 days");
-
     try {
-        const today = new Date();
-        const upcomingDays = [];
-        for (let i = 0; i < 7; i++) {
-            const d = new Date(today);
-            d.setDate(d.getDate() + i);
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            upcomingDays.push(`${year}-${month}-${day}`);
-        }
-
         const virtualSlots = getVirtualSlots(req.user._id, 7);
 
-        const dbSlots = await Availability.find({
+        // Upsert all virtual slots into DB so they have real _id's.
+        // This makes updateSlot and deleteSlot work correctly.
+        // Using bulkWrite with upsert is idempotent — safe to call multiple times.
+        if (virtualSlots.length > 0) {
+            const upsertOps = virtualSlots.map(slot => ({
+                updateOne: {
+                    filter: {
+                        professorId: slot.professorId,
+                        date: slot.date,
+                        startTime: slot.startTime
+                    },
+                    update: {
+                        $setOnInsert: {
+                            professorId: slot.professorId,
+                            date: slot.date,
+                            startTime: slot.startTime,
+                            endTime: slot.endTime,
+                            status: slot.status
+                        }
+                    },
+                    upsert: true
+                }
+            }));
+            await Availability.bulkWrite(upsertOps);
+        }
+
+        // Fetch the now-persisted slots (with real _id's)
+        const upcomingDays = virtualSlots.map(s => s.date);
+        const slots = await Availability.find({
             professorId: req.user._id,
             date: { $in: upcomingDays }
-        });
-
-        const slots = mergeVirtualWithDB(virtualSlots, dbSlots);
+        }).sort({ date: 1, startTime: 1 });
 
         res.status(200).json({ message: "Slots retrieved", slots });
     } catch (error) {
@@ -87,56 +91,31 @@ export const updateSlot = async (req, res) => {
             return res.status(400).json({ errors: "Slots can only be updated for Monday through Friday." });
         }
 
-        const existingSlot = await Availability.findOne({ professorId: req.user._id, date, startTime, endTime });
-        if (existingSlot && existingSlot.status === "booked") {
-            return res.status(400).json({ errors: "Cannot manually modify a slot that is actively booked by a student. Please use the cancel appointment route." });
-        }
-
-        let slot = await Availability.findOneAndUpdate(
-            { professorId: req.user._id, date, startTime, endTime },
-            { status },
-            { returnDocument: "after" }
-        );
-
-        if (!slot) {
-            slot = new Availability({
-                professorId: req.user._id,
-                date,
-                startTime,
-                endTime,
-                status
-            });
-            await slot.save();
-        }
-
-        res.status(200).json({ message: "Slot updated", slot });
-    } catch (error) {
-        console.error("Error updating slot", error);
-        res.status(500).json({ errors: "Error updating slot status" });
-    }
-};
-
-export const deleteSlot = async (req, res) => {
-    try {
-
-        const { id } = req.params;
-
-        const existingSlot = await Availability.findOne({ _id: id, professorId: req.user._id });
+        const existingSlot = await Availability.findOne({
+            professorId: req.user._id,
+            date,
+            startTime,
+            endTime
+        });
 
         if (!existingSlot) {
-            return res.status(404).json({ errors: "Slot not found or unauthorized" });
+            return res.status(404).json({ errors: "Slot not found. Cannot update non-existing slot." });
         }
 
         if (existingSlot.status === "booked") {
-            return res.status(400).json({ errors: "Cannot delete a slot that is actively booked by a student. Please use the cancel appointment route first." });
+            return res.status(400).json({
+                errors: "Cannot manually modify a slot that is actively booked by a student. Please use the cancel appointment route."
+            });
         }
 
-        await Availability.findByIdAndDelete(id);
+        existingSlot.status = status;
+        await existingSlot.save();
 
-        res.status(200).json({ message: "Slot deleted successfully" });
+        res.status(200).json({ message: "Slot updated", slot: existingSlot });
+
     } catch (error) {
-        console.error("Error deleting slot", error);
-        res.status(500).json({ errors: "Error deleting slot" });
+        console.error("Error updating slot", error);
+        res.status(500).json({ errors: "Error updating slot status" });
     }
 };
 

@@ -2,7 +2,6 @@ import express from "express";
 import {
     viewOwnSlots,
     updateSlot,
-    deleteSlot,
     viewAllSlots,
     viewAllBookings,
     cancelAppointment
@@ -19,9 +18,6 @@ router.get("/availability/me", viewOwnSlots);
 
 // Upsert physical DB exception to mark slot as 'blocked'
 router.post("/availability/update", updateSlot);
-
-// deleting already booked slot
-router.delete("/availability/:id", deleteSlot);
 
 // View all changes made in virtual database
 router.get("/availability/me/all", viewAllSlots);

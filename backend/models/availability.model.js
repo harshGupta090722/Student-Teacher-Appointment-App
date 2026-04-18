@@ -25,4 +25,6 @@ const availabilitySchema = new mongoose.Schema({
     }
 });
 
+availabilitySchema.index({ professorId: 1, date: 1, startTime: 1 }, { unique: true });
+
 export const Availability = mongoose.model("Availability", availabilitySchema);
